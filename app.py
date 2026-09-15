@@ -51,7 +51,7 @@ st.markdown(
         overflow: hidden;
     }}
     .kpi-label {{
-        font-size: 11px; color: {COLORS['muted']}; font-weight: 700;
+        font-size: 11px; color: #334155; font-weight: 700;
         text-transform: uppercase; letter-spacing: .04em; margin-bottom: 6px;
         white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }}
@@ -159,6 +159,13 @@ def quality_bg(val):
     else:
         return "background-color: #f2b8ab"
 
+def style_quality(dframe, cols):
+    styler = dframe.style
+    try:
+        return styler.map(quality_bg, subset=cols)
+    except AttributeError:
+        return styler.applymap(quality_bg, subset=cols)
+
 def fmt_hms(total_seconds):
     if pd.isna(total_seconds) or total_seconds is None:
         return "00:00:00"
@@ -173,11 +180,14 @@ def style_fig(fig, height=380, xaxis_title=None, yaxis_title=None):
         title_font=dict(size=15, color="#0f172a", family=FONT["family"]),
         paper_bgcolor="#ffffff", plot_bgcolor="#ffffff",
         margin=dict(l=10, r=10, t=50, b=60), height=height,
-        legend=dict(orientation="h", yanchor="bottom", y=1.03, xanchor="right", x=1, title=None),
-        hoverlabel=dict(bgcolor="white", font_size=12),
+        legend=dict(orientation="h", yanchor="bottom", y=1.03, xanchor="right", x=1,
+                     title=None, font=dict(color="#0f172a", size=12)),
+        hoverlabel=dict(bgcolor="white", font_size=12, font_color="#0f172a"),
     )
-    fig.update_xaxes(showgrid=False, title_text=xaxis_title, showline=True, linecolor=COLORS["border"])
-    fig.update_yaxes(showgrid=True, gridcolor="#eef1f5", title_text=yaxis_title, showline=True, linecolor=COLORS["border"])
+    fig.update_xaxes(showgrid=False, title_text=xaxis_title, showline=True, linecolor=COLORS["border"],
+                      title_font=dict(color="#0f172a", size=12), tickfont=dict(color="#0f172a", size=11))
+    fig.update_yaxes(showgrid=True, gridcolor="#eef1f5", title_text=yaxis_title, showline=True, linecolor=COLORS["border"],
+                      title_font=dict(color="#0f172a", size=12), tickfont=dict(color="#0f172a", size=11))
     return fig
 
 # =====================================================
@@ -258,7 +268,7 @@ st.write("")
 # =====================================================
 # WEEKLY TREND & DATE-WISE TREND (combo bar + line)
 # =====================================================
-def combo_trend_chart(data, group_col, title):
+def combo_trend_chart(data, group_col, title, limit_recent=None):
     if group_col not in data.columns or len(data) == 0:
         st.info(f"'{group_col}' column not found or no data.")
         return
@@ -267,27 +277,33 @@ def combo_trend_chart(data, group_col, title):
         Coder_Quality=("Coder Quality", "mean")
     ).reset_index().sort_values(group_col)
 
+    if limit_recent:
+        g = g.tail(limit_recent)  # only show the most recent N periods
+
+    is_date_axis = pd.api.types.is_datetime64_any_dtype(g[group_col])
+    x_vals = g[group_col].dt.strftime("%d/%m/%Y") if is_date_axis else g[group_col]
+
     is_dense = len(g) > 12  # too many categories -> data labels overlap, so hide them
 
     fig = make_subplots(specs=[[{"secondary_y": True}]])
     fig.add_trace(go.Bar(
-        x=g[group_col], y=g["Total_Chart"], name="Total_Chart",
+        x=x_vals, y=g["Total_Chart"], name="Total_Chart",
         marker_color=COLORS["bar"],
         text=None if is_dense else g["Total_Chart"].map(lambda v: f"{v:,.0f}"),
-        textposition="outside",
+        textposition="outside", textfont=dict(color="#0f172a"),
         hovertemplate="%{x}<br>Total_Chart: %{y:,.0f}<extra></extra>",
     ), secondary_y=False)
     fig.add_trace(go.Scatter(
-        x=g[group_col], y=g["Coder_Quality"], name="Coder Quality",
+        x=x_vals, y=g["Coder_Quality"], name="Coder Quality",
         mode="lines+markers" if is_dense else "lines+markers+text",
         line=dict(color=COLORS["line"], width=2), marker=dict(size=5),
         text=None if is_dense else g["Coder_Quality"].round(2),
-        textposition="top center",
+        textposition="top center", textfont=dict(color="#c2410c"),
         hovertemplate="%{x}<br>Coder Quality: %{y:.2f}<extra></extra>",
     ), secondary_y=True)
     fig.update_yaxes(title_text="Total_Chart", secondary_y=False)
     fig.update_yaxes(title_text="Coder Quality", range=[0, 100], secondary_y=True)
-    fig.update_xaxes(tickangle=-45 if is_dense else 0)
+    fig.update_xaxes(tickangle=-45 if (is_dense and not limit_recent) else 0, type="category")
     fig.update_layout(title=title)
     st.plotly_chart(style_fig(fig, height=400), use_container_width=True)
 
@@ -296,7 +312,7 @@ tcol1, tcol2 = st.columns(2)
 with tcol1:
     combo_trend_chart(filtered, "Coding Week", "Weekly Trend")
 with tcol2:
-    combo_trend_chart(filtered, "Coder_Completed_Date", "Date-wise Trend")
+    combo_trend_chart(filtered, "Coder_Completed_Date", "Date-wise Trend", limit_recent=7)
 
 # =====================================================
 # BUBBLE CHARTS
@@ -307,26 +323,44 @@ bcol1, bcol2 = st.columns(2)
 with bcol1:
     if "Coder" in filtered.columns and len(filtered):
         cb = filtered.groupby("Coder").agg(
-            X=("Coder Avg time per chart", "mean"),
-            Y=("Coder Quality", "mean"),
-            Size=("Total_Chart", "sum")
+            Coder_Avg_Time_Per_Chart_Sec=("Coder Avg time per chart", "mean"),
+            Coder_Quality=("Coder Quality", "mean"),
+            Total_Chart=("Total_Chart", "sum")
         ).reset_index()
-        fig = px.scatter(cb, x="X", y="Y", size="Size", hover_name="Coder",
-                          title="Coder Quality & Avg. Time Taken Metrics",
-                          color_discrete_sequence=[COLORS["primary"]])
+        fig = px.scatter(
+            cb, x="Coder_Avg_Time_Per_Chart_Sec", y="Coder_Quality", size="Total_Chart",
+            hover_name="Coder", title="Coder Quality & Avg. Time Taken Metrics",
+            color_discrete_sequence=[COLORS["primary"]],
+            labels={
+                "Coder_Avg_Time_Per_Chart_Sec": "Coder Avg time per chart (sec)",
+                "Coder_Quality": "Coder Quality",
+                "Total_Chart": "Total_Chart",
+            },
+        )
+        fig.update_traces(hovertemplate="<b>%{hovertext}</b><br>Coder Avg time per chart (sec): %{x:.0f}"
+                           "<br>Coder Quality: %{y:.2f}<br>Total_Chart: %{marker.size:,.0f}<extra></extra>")
         st.plotly_chart(style_fig(fig, xaxis_title="Coder Avg time per chart (sec)",
                                    yaxis_title="Coder Quality"), use_container_width=True)
 
 with bcol2:
     if "Auditor_1" in filtered.columns and len(filtered):
         ab = filtered.groupby("Auditor_1").agg(
-            X=("Auditor_1_Completed_Time_In_Minutes", "mean"),
-            Y=("Auditor Quality", "mean"),
-            Size=("Audited Charts", "sum")
+            Auditor_1_Completed_Time_In_Minutes=("Auditor_1_Completed_Time_In_Minutes", "mean"),
+            Auditor_Quality=("Auditor Quality", "mean"),
+            Audited_Charts=("Audited Charts", "sum")
         ).reset_index()
-        fig = px.scatter(ab, x="X", y="Y", size="Size", hover_name="Auditor_1",
-                          title="Auditor Quality & Avg. Time Taken Metrics",
-                          color_discrete_sequence=[COLORS["primary"]])
+        fig = px.scatter(
+            ab, x="Auditor_1_Completed_Time_In_Minutes", y="Auditor_Quality", size="Audited_Charts",
+            hover_name="Auditor_1", title="Auditor Quality & Avg. Time Taken Metrics",
+            color_discrete_sequence=[COLORS["primary"]],
+            labels={
+                "Auditor_1_Completed_Time_In_Minutes": "Auditor_1_Completed_Time_In_Minutes",
+                "Auditor_Quality": "Auditor Quality",
+                "Audited_Charts": "Audited Charts",
+            },
+        )
+        fig.update_traces(hovertemplate="<b>%{hovertext}</b><br>Auditor_1_Completed_Time_In_Minutes: %{x:.1f}"
+                           "<br>Auditor Quality: %{y:.2f}<br>Audited Charts: %{marker.size:,.0f}<extra></extra>")
         st.plotly_chart(style_fig(fig, xaxis_title="Auditor_1_Completed_Time_In_Minutes",
                                    yaxis_title="Auditor Quality"), use_container_width=True)
 
@@ -346,7 +380,7 @@ if "Coder POD" in filtered.columns and len(filtered):
     pod_table["Coder_Avg_time_per_chart"] = pod_table["Coder_Avg_time_per_chart"].apply(fmt_hms)
     for c in ["Coder_Quality", "Auditor_Quality", "Client_Quality"]:
         pod_table[c] = pod_table[c].round(2)
-    styled_pod = pod_table.style.applymap(quality_bg, subset=["Coder_Quality", "Auditor_Quality", "Client_Quality"])
+    styled_pod = style_quality(pod_table, ["Coder_Quality", "Auditor_Quality", "Client_Quality"])
     st.dataframe(styled_pod, hide_index=True, use_container_width=True)
     st.download_button("⬇️ Download POD-wise Details", pod_table.to_csv(index=False),
                         "POD_wise_Details.csv", "text/csv")
@@ -403,7 +437,7 @@ if "Coder" in filtered.columns and len(filtered):
     perf["Avg_Time_Taken"] = perf["Avg_Time_Taken"].apply(fmt_hms)
     perf = perf.sort_values("Charts", ascending=False)
 
-    styled_perf = perf.style.applymap(quality_bg, subset=["Quality"])
+    styled_perf = style_quality(perf, ["Quality"])
     st.dataframe(styled_perf, hide_index=True, use_container_width=True)
     st.download_button("⬇️ Download Coder Performance", perf.to_csv(index=False),
                         "Coder_Performance.csv", "text/csv")
