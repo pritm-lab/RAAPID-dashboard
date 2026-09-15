@@ -438,7 +438,26 @@ if "Coder" in filtered.columns and len(filtered):
     perf = perf.sort_values("Charts", ascending=False)
 
     styled_perf = style_quality(perf, ["Quality"])
-    st.dataframe(styled_perf, hide_index=True, use_container_width=True)
+    
+    st.dataframe(
+        styled_perf,
+        hide_index=True,
+        use_container_width=True,
+        column_config={
+            "Quality": st.column_config.NumberColumn(
+                "Quality",
+                format="%.2f"
+            ),
+            "NoGo %": st.column_config.NumberColumn(
+                "NoGo %",
+                format="%.2f"
+            ),
+            "Audit %": st.column_config.NumberColumn(
+                "Audit %",
+                format="%.2f"
+            ),
+        }
+    )
     st.download_button("⬇️ Download Coder Performance", perf.to_csv(index=False),
                         "Coder_Performance.csv", "text/csv")
 
