@@ -33,25 +33,54 @@ st.markdown(
     f"""
     <style>
     .stApp {{ background-color: {COLORS['bg_app']}; }}
+    .block-container {{ padding-top: 1.5rem; max-width: 1500px; }}
+
     .kpi-card {{
         background: {COLORS['bg_card']};
         border: 1px solid {COLORS['border']};
-        border-radius: 12px;
-        padding: 14px 16px;
-        box-shadow: 0 2px 8px rgba(15,23,42,0.06);
+        border-radius: 14px;
+        padding: 16px 14px;
+        box-shadow: 0 2px 10px rgba(15,23,42,0.07);
         text-align: left;
+        height: 92px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        overflow: hidden;
     }}
     .kpi-label {{
-        font-size: 12px; color: {COLORS['muted']}; font-weight: 700;
-        text-transform: uppercase; letter-spacing: .02em; margin-bottom: 4px;
+        font-size: 11px; color: {COLORS['muted']}; font-weight: 700;
+        text-transform: uppercase; letter-spacing: .04em; margin-bottom: 6px;
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }}
-    .kpi-value {{ font-size: 24px; font-weight: 800; color: #0f172a; }}
-    .section-title {{ font-size: 20px; font-weight: 800; color: #0f172a; margin: 6px 0 10px 0; }}
+    .kpi-value {{
+        font-weight: 800; color: #0f172a; line-height: 1.1;
+        white-space: nowrap; overflow: hidden;
+        font-size: clamp(15px, 1.6vw, 22px);
+    }}
+
+    .section-title {{
+        font-size: 19px; font-weight: 800; color: #0f172a;
+        margin: 22px 0 12px 0; padding-bottom: 8px;
+        border-bottom: 2px solid {COLORS['border']};
+    }}
+
     div[data-testid="stPlotlyChart"], div[data-testid="stDataFrame"] {{
         background: {COLORS['bg_card']};
         border: 1px solid {COLORS['border']};
-        border-radius: 12px;
-        padding: 10px;
+        border-radius: 14px;
+        padding: 12px;
+        box-shadow: 0 2px 10px rgba(15,23,42,0.05);
+    }}
+
+    section[data-testid="stSidebar"] {{
+        background-color: #ffffff;
+        border-right: 1px solid {COLORS['border']};
+    }}
+    section[data-testid="stSidebar"] .stMultiSelect {{ margin-bottom: 2px; }}
+
+    div[data-testid="stMetric"], .stButton button, .stDownloadButton button {{
+        border-radius: 8px;
     }}
     </style>
     """,
@@ -121,9 +150,11 @@ def fmt_hms(total_seconds):
 def style_fig(fig, height=380, xaxis_title=None, yaxis_title=None):
     fig.update_layout(
         template=CHART_TEMPLATE, font=FONT,
+        title_font=dict(size=15, color="#0f172a", family=FONT["family"]),
         paper_bgcolor="#ffffff", plot_bgcolor="#ffffff",
-        margin=dict(l=10, r=10, t=45, b=10), height=height,
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, title=None),
+        margin=dict(l=10, r=10, t=50, b=60), height=height,
+        legend=dict(orientation="h", yanchor="bottom", y=1.03, xanchor="right", x=1, title=None),
+        hoverlabel=dict(bgcolor="white", font_size=12),
     )
     fig.update_xaxes(showgrid=False, title_text=xaxis_title, showline=True, linecolor=COLORS["border"])
     fig.update_yaxes(showgrid=True, gridcolor="#eef1f5", title_text=yaxis_title, showline=True, linecolor=COLORS["border"])
@@ -133,32 +164,34 @@ def style_fig(fig, height=380, xaxis_title=None, yaxis_title=None):
 # SIDEBAR FILTERS
 # =====================================================
 st.sidebar.markdown("### 🔍 Filters")
+st.sidebar.caption("Filters are connected — picking a value narrows the options below it.")
 
-def ms_filter(label, col):
-    if col in df.columns:
-        opts = sorted(df[col].dropna().astype(str).unique().tolist())
-        return st.sidebar.multiselect(label, opts)
-    return []
+FILTER_DEFS = [
+    ("Client Name", "client_name"),
+    ("Project Name", "project_name"),
+    ("Domain", "Domain"),
+    ("Required Validation Code", "Required Validation Code"),
+    ("Coder Location", "Coder_Location"),
+    ("A1 Location", "A1_Location"),
+    ("A2 Location", "A2_Location"),
+    ("Coder POD", "Coder POD"),
+    ("Coding Week", "Coding Week"),
+]
 
-client_f = ms_filter("Client Name", "client_name")
-project_f = ms_filter("Project Name", "project_name")
-domain_f = ms_filter("Domain", "Domain")
-rvc_f = ms_filter("Required Validation Code", "Required Validation Code")
-coder_loc_f = ms_filter("Coder Location", "Coder_Location")
-a1_loc_f = ms_filter("A1 Location", "A1_Location")
-a2_loc_f = ms_filter("A2 Location", "A2_Location")
-pod_f = ms_filter("Coder POD", "Coder POD")
-week_f = ms_filter("Coding Week", "Coding Week")
-
+# Cascading filters: each filter's dropdown options are computed from the
+# data already narrowed by every OTHER filter's current selection, and the
+# working dataframe is progressively filtered as we go down the list.
 filtered = df.copy()
-filter_map = {
-    "client_name": client_f, "project_name": project_f, "Domain": domain_f,
-    "Required Validation Code": rvc_f, "Coder_Location": coder_loc_f,
-    "A1_Location": a1_loc_f, "A2_Location": a2_loc_f, "Coder POD": pod_f,
-    "Coding Week": week_f,
-}
-for col, vals in filter_map.items():
-    if vals and col in filtered.columns:
+selections = {}
+for label, col in FILTER_DEFS:
+    if col not in df.columns:
+        continue
+    opts = sorted(filtered[col].dropna().astype(str).unique().tolist())
+    key = f"filter_{col}"
+    default = [v for v in st.session_state.get(key, []) if v in opts]
+    vals = st.sidebar.multiselect(label, opts, default=default, key=key)
+    selections[col] = vals
+    if vals:
         filtered = filtered[filtered[col].astype(str).isin(vals)]
 
 st.sidebar.markdown("---")
@@ -212,18 +245,29 @@ def combo_trend_chart(data, group_col, title):
         Coder_Quality=("Coder Quality", "mean")
     ).reset_index().sort_values(group_col)
 
+    is_dense = len(g) > 12  # too many categories -> data labels overlap, so hide them
+
     fig = make_subplots(specs=[[{"secondary_y": True}]])
-    fig.add_trace(go.Bar(x=g[group_col], y=g["Total_Chart"], name="Total_Chart",
-                          marker_color=COLORS["bar"], text=g["Total_Chart"].map(lambda v: f"{v:,.0f}"),
-                          textposition="outside"), secondary_y=False)
-    fig.add_trace(go.Scatter(x=g[group_col], y=g["Coder_Quality"], name="Coder Quality",
-                              mode="lines+markers+text", line=dict(color=COLORS["line"]),
-                              text=g["Coder_Quality"].round(2), textposition="top center"),
-                  secondary_y=True)
+    fig.add_trace(go.Bar(
+        x=g[group_col], y=g["Total_Chart"], name="Total_Chart",
+        marker_color=COLORS["bar"],
+        text=None if is_dense else g["Total_Chart"].map(lambda v: f"{v:,.0f}"),
+        textposition="outside",
+        hovertemplate="%{x}<br>Total_Chart: %{y:,.0f}<extra></extra>",
+    ), secondary_y=False)
+    fig.add_trace(go.Scatter(
+        x=g[group_col], y=g["Coder_Quality"], name="Coder Quality",
+        mode="lines+markers" if is_dense else "lines+markers+text",
+        line=dict(color=COLORS["line"], width=2), marker=dict(size=5),
+        text=None if is_dense else g["Coder_Quality"].round(2),
+        textposition="top center",
+        hovertemplate="%{x}<br>Coder Quality: %{y:.2f}<extra></extra>",
+    ), secondary_y=True)
     fig.update_yaxes(title_text="Total_Chart", secondary_y=False)
     fig.update_yaxes(title_text="Coder Quality", range=[0, 100], secondary_y=True)
+    fig.update_xaxes(tickangle=-45 if is_dense else 0)
     fig.update_layout(title=title)
-    st.plotly_chart(style_fig(fig, height=380), use_container_width=True)
+    st.plotly_chart(style_fig(fig, height=400), use_container_width=True)
 
 st.markdown('<div class="section-title">📈 Trend</div>', unsafe_allow_html=True)
 tcol1, tcol2 = st.columns(2)
