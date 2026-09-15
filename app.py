@@ -26,6 +26,8 @@ COLORS = {
     "bg_app": "#eef2f7",
     "border": "#e2e8f0",
 }
+# KPI card colors, in order — matches the Looker Studio reference palette
+KPI_COLORS = ["#f6c9d1", "#b8dff0", "#c7e8c5", "#d6c9f0", "#f8e5a1", "#f2b8ab", "#a9e0dc", "#c3d0f0"]
 CHART_TEMPLATE = "plotly_white"
 FONT = dict(family="Segoe UI, Helvetica, Arial, sans-serif", size=13, color=COLORS["text"])
 
@@ -60,9 +62,15 @@ st.markdown(
     }}
 
     .section-title {{
-        font-size: 19px; font-weight: 800; color: #0f172a;
-        margin: 22px 0 12px 0; padding-bottom: 8px;
-        border-bottom: 2px solid {COLORS['border']};
+        font-size: 15px; font-weight: 800; color: #ffffff;
+        background: #111827;
+        margin: 22px 0 14px 0; padding: 10px 16px;
+        border-radius: 6px; text-align: center; letter-spacing: .03em;
+    }}
+
+    .subsection-title {{
+        font-size: 17px; font-weight: 800; font-style: italic; color: #0f172a;
+        text-align: center; margin-bottom: 8px;
     }}
 
     div[data-testid="stPlotlyChart"], div[data-testid="stDataFrame"] {{
@@ -139,7 +147,17 @@ def load_data():
 
 df = load_data()
 
-def fmt_hms(total_seconds):
+def quality_bg(val):
+    try:
+        v = float(val)
+    except (TypeError, ValueError):
+        return ""
+    if v >= 97:
+        return "background-color: #c7e8c5"
+    elif v >= 90:
+        return "background-color: #f8e5a1"
+    else:
+        return "background-color: #f2b8ab"
     if pd.isna(total_seconds) or total_seconds is None:
         return "00:00:00"
     total_seconds = int(round(total_seconds))
@@ -224,10 +242,12 @@ kpis = [
     ("Avg. Client Quality", f"{avg_client_quality:.2f}" if pd.notna(avg_client_quality) else "—"),
 ]
 
+st.markdown('<div class="section-title">KPI</div>', unsafe_allow_html=True)
 kpi_cols = st.columns(len(kpis))
-for c, (label, value) in zip(kpi_cols, kpis):
+for c, (label, value), color in zip(kpi_cols, kpis, KPI_COLORS):
     c.markdown(
-        f'<div class="kpi-card"><div class="kpi-label">{label}</div><div class="kpi-value">{value}</div></div>',
+        f'<div class="kpi-card" style="background:{color};border-color:{color};">'
+        f'<div class="kpi-label">{label}</div><div class="kpi-value">{value}</div></div>',
         unsafe_allow_html=True
     )
 
@@ -269,7 +289,7 @@ def combo_trend_chart(data, group_col, title):
     fig.update_layout(title=title)
     st.plotly_chart(style_fig(fig, height=400), use_container_width=True)
 
-st.markdown('<div class="section-title">📈 Trend</div>', unsafe_allow_html=True)
+st.markdown('<div class="section-title">Trend</div>', unsafe_allow_html=True)
 tcol1, tcol2 = st.columns(2)
 with tcol1:
     combo_trend_chart(filtered, "Coding Week", "Weekly Trend")
@@ -279,7 +299,7 @@ with tcol2:
 # =====================================================
 # BUBBLE CHARTS
 # =====================================================
-st.markdown('<div class="section-title">🔵 Quality &amp; Avg. Time Taken Metrics</div>', unsafe_allow_html=True)
+st.markdown('<div class="section-title">Quality &amp; Avg. Time Taken Metrics</div>', unsafe_allow_html=True)
 bcol1, bcol2 = st.columns(2)
 
 with bcol1:
@@ -311,7 +331,7 @@ with bcol2:
 # =====================================================
 # POD-WISE DETAILS TABLE
 # =====================================================
-st.markdown('<div class="section-title">📋 POD-wise Details</div>', unsafe_allow_html=True)
+st.markdown('<div class="section-title">POD-wise Details</div>', unsafe_allow_html=True)
 if "Coder POD" in filtered.columns and len(filtered):
     pod_table = filtered.groupby("Coder POD").agg(
         Total_Chart=("Total_Chart", "sum"),
@@ -324,7 +344,8 @@ if "Coder POD" in filtered.columns and len(filtered):
     pod_table["Coder_Avg_time_per_chart"] = pod_table["Coder_Avg_time_per_chart"].apply(fmt_hms)
     for c in ["Coder_Quality", "Auditor_Quality", "Client_Quality"]:
         pod_table[c] = pod_table[c].round(2)
-    st.dataframe(pod_table, hide_index=True, use_container_width=True)
+    styled_pod = pod_table.style.applymap(quality_bg, subset=["Coder_Quality", "Auditor_Quality", "Client_Quality"])
+    st.dataframe(styled_pod, hide_index=True, use_container_width=True)
     st.download_button("⬇️ Download POD-wise Details", pod_table.to_csv(index=False),
                         "POD_wise_Details.csv", "text/csv")
 
@@ -333,7 +354,7 @@ st.markdown("---")
 # =====================================================
 # PAGE 2: TOP/BOTTOM PERFORMERS
 # =====================================================
-st.markdown('<div class="section-title">🏆 Top 10 / Bottom 10 Performer (Coder Quality)</div>', unsafe_allow_html=True)
+st.markdown('<div class="section-title">Top 10 / Bottom 10 Performer</div>', unsafe_allow_html=True)
 if "Coder" in filtered.columns and len(filtered):
     coder_quality = filtered.groupby("Coder")["Coder Quality"].mean().reset_index()
     top10 = coder_quality.sort_values("Coder Quality", ascending=False).head(10)
@@ -341,14 +362,16 @@ if "Coder" in filtered.columns and len(filtered):
 
     pcol1, pcol2 = st.columns(2)
     with pcol1:
+        st.markdown('<div class="subsection-title">Top 10 Performer</div>', unsafe_allow_html=True)
         fig = px.bar(top10.sort_values("Coder Quality"), x="Coder Quality", y="Coder",
-                     orientation="h", text="Coder Quality", title="Top 10 Performer",
+                     orientation="h", text="Coder Quality",
                      color_discrete_sequence=[COLORS["bar"]])
         fig.update_traces(texttemplate="%{text:.2f}", textposition="outside")
         st.plotly_chart(style_fig(fig, height=380), use_container_width=True)
     with pcol2:
+        st.markdown('<div class="subsection-title">Bottom 10 Performer</div>', unsafe_allow_html=True)
         fig = px.bar(bottom10.sort_values("Coder Quality", ascending=False), x="Coder Quality", y="Coder",
-                     orientation="h", text="Coder Quality", title="Bottom 10 Performer",
+                     orientation="h", text="Coder Quality",
                      color_discrete_sequence=[COLORS["bar"]])
         fig.update_traces(texttemplate="%{text:.2f}", textposition="outside")
         st.plotly_chart(style_fig(fig, height=380), use_container_width=True)
@@ -356,7 +379,7 @@ if "Coder" in filtered.columns and len(filtered):
 # =====================================================
 # CODER PERFORMANCE TABLE
 # =====================================================
-st.markdown('<div class="section-title">👤 Coder Performance</div>', unsafe_allow_html=True)
+st.markdown('<div class="section-title">Coder Performance</div>', unsafe_allow_html=True)
 if "Coder" in filtered.columns and len(filtered):
     perf = filtered.groupby(["Coder_Location", "Coder"]).agg(
         Charts=("Total_Chart", "sum"),
@@ -378,7 +401,8 @@ if "Coder" in filtered.columns and len(filtered):
     perf["Avg_Time_Taken"] = perf["Avg_Time_Taken"].apply(fmt_hms)
     perf = perf.sort_values("Charts", ascending=False)
 
-    st.dataframe(perf, hide_index=True, use_container_width=True)
+    styled_perf = perf.style.applymap(quality_bg, subset=["Quality"])
+    st.dataframe(styled_perf, hide_index=True, use_container_width=True)
     st.download_button("⬇️ Download Coder Performance", perf.to_csv(index=False),
                         "Coder_Performance.csv", "text/csv")
 
