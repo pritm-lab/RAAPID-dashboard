@@ -136,7 +136,7 @@ st.sidebar.markdown("### 🔍 Filters")
 
 def ms_filter(label, col):
     if col in df.columns:
-        opts = sorted(df[col].dropna().unique().tolist())
+        opts = sorted(df[col].dropna().astype(str).unique().tolist())
         return st.sidebar.multiselect(label, opts)
     return []
 
@@ -159,7 +159,7 @@ filter_map = {
 }
 for col, vals in filter_map.items():
     if vals and col in filtered.columns:
-        filtered = filtered[filtered[col].isin(vals)]
+        filtered = filtered[filtered[col].astype(str).isin(vals)]
 
 st.sidebar.markdown("---")
 st.sidebar.download_button(
