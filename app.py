@@ -158,6 +158,8 @@ def quality_bg(val):
         return "background-color: #f8e5a1"
     else:
         return "background-color: #f2b8ab"
+
+def fmt_hms(total_seconds):
     if pd.isna(total_seconds) or total_seconds is None:
         return "00:00:00"
     total_seconds = int(round(total_seconds))
